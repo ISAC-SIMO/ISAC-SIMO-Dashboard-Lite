@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ISAC-SIMO Lite</title>
+  <script src="https://cdn.jsdelivr.net/npm/vue@2/dist/vue.js"></script>
+  <link rel="stylesheet" href="https://bootswatch.com/4/darkly/bootstrap.min.css"/>
+  <script src="https://cdn.jsdelivr.net/npm/vue-toast-notification"></script>
+  <link href="https://cdn.jsdelivr.net/npm/vue-toast-notification/dist/theme-sugar.css" rel="stylesheet">
+</head>
+<body>
+  <div id="app"></div>
+
+  {% verbatim %}
+  <script>
+    Vue.use(VueToast);
+    Vue.component('model', {
+      props: ["data"],
+      data: function() {
+        return {
+          
+        };
+      },
+      template: `
+        <b>{{JSON.stringify(data)}}</b>
+      `
+    });
+
+    var app = new Vue({
+      el: '#app',
+      data: {
+        name: 'ISAC-SIMO LITE',
+        models: [],
+        new_model: {
+          name: "",
+          type: "",
+          file: null,
+          labels: [],
+          collection_id: "",
+          ibm_api_key: "",
+          freeze: false
+        }
+      },
+      mounted: function() {
+        /*window.addEventListener("beforeunload", function (e) {
+            var confirmationMessage = 'It looks like you have been editing something. '
+                                    + 'If you leave before saving, your changes will be lost.';
+
+            (e || window.event).returnValue = confirmationMessage;
+            return confirmationMessage;
+        });*/
+      },
+      methods:{
+        addNewModel: function () {
+          this.models.push({...this.new_model, id: (new Date()).getTime()});
+        },
+        resetModels: function() {
+          this.models = [];
+        },
+        addFile: function(e, index) {
+          if(e.target.files && e.target.files.length > 0) {
+            this.models[index].file = e.target.files[0];
+          } else {
+            console.warn("File Unset");
+            this.models[index].file = null;
+          }
+        },
+        formatLabel: function(e, index) {
+          this.models[index].labels = e.target.value.split(",").map((l) => l.trim());
+        },
+        deleteModel: function(index) {
+          if (confirm('Delete this Model ?')) {
+            this.models.splice(index, 1);
+          }
+        },
+        alertUserToCard: function(index, msg) {
+          if(document.getElementById("card"+index)) {
+            document.getElementById("card"+index).scrollIntoView({behavior: "smooth"});
+            Vue.$toast.error(msg, {duration: 5000});
+            setTimeout(() => {
+              document.getElementById("card"+index).style.filter = "brightness(0.5)";
+            }, 100);
+
+            setTimeout(() => {
+              document.getElementById("card"+index).style.filter = "none";
+            }, 700);
+          }
+        },
+        testImage: function() {
+          let dupliModels = [...this.models];
+          // Validate
+          for (let [index, model] of dupliModels.entries()) {
+            if(!model.name) {
+              return this.alertUserToCard(index, ("Name Missing For #" + (index+1)));
+            }
+            if(!model.type && model.type == "") {
+              return this.alertUserToCard(index, ("Model Type Not Provided For: " + (model.name)));
+            }
+            if(model.type.indexOf('watson') < 0 && !model.file) {
+              return this.alertUserToCard(index, ("File is Required For Offline/Local Model named: " + (model.name)));
+            }
+            if((model.type == 'watsonclassifier' || model.type == 'watsonobjectdetection') && !model.labels) {
+              return this.alertUserToCard(index, ("Labels is Required By such Models in: " + (model.name)));
+            }
+            if(model.type.indexOf('watson') >= 0 && (!model.collection_id || !model.ibm_api_key)) {
+              return this.alertUserToCard(index, ("Collection ID and IBM API Key is Required for: " + (model.name)));
+            }
+            delete model.freeze;
+            //console.log(dupliModels)
+          }
+        }
+      },
+      template: `
+        <div class="container">
+          <h1>ISAC-SIMO Lite</h1>
+          <h4>Developer Test Tool</h4>
+
+          <model v-for="model in models" :key="model.id" :data="model"/>
+
+          <hr/>
+
+          <div class="card blinker" v-for="model,index in models" :key="'c'+model.id" :id="'card'+index" style="margin-bottom: 25px;">
+            <div class="card-body" :style="model.freeze ? 'opacity:0.5;' : ''">
+              <h3>#{{index+1}}</h3>
+              <div class="form-group">
+                <label :for="'name'+index">Name:</label>
+                <input class="form-control" :id="'name'+index" v-model="model.name" placeholder="Name to remember it as" required :disabled="model.freeze">
+              </div>
+
+              <div class="form-group">
+                <label :for="'model_type'+index">Model Type:</label>
+                <select class="form-control" :id="'model_type'+index" v-model="model.type" required :disabled="model.freeze">
+                  <option value="" disabled selected hidden>Select A Model Type</option>
+                  <option value="preprocessor">Pre-Processor (Python Script)</option>
+                  <option value="postprocessor">Post-Processor (Python Script)</option>
+                  <option value="classifier">Offline Classifier Model (H5, Python Scripts, Keras model etc.)</option>
+                  <option value="offlinemodel">Offline Object Detect Model (H5, Python Scripts, Keras model etc.)</option>
+                  <option value="watsonclassifier">Watson Classifier</option>
+                  <option value="watsonobjectdetection">Watson Object Detection</option>
+                </select>
+              </div>
+
+              <div class="form-group" v-if="model.type && model.type.indexOf('watson') < 0">
+                <label :for="'file'+index">Model File</label>
+                <input type="file" @change="addFile($event, index)" class="form-control-file" :id="'file'+index" required :disabled="model.freeze">
+              </div>
+
+              <div class="form-group" v-if="model.type && model.type == 'classifier' || model.type == 'offlinemodel'">
+                <label :for="'labels'+index">Comma Separated Label:</label>
+                <input class="form-control" :id="'labels'+index" @input="formatLabel($event, index)" :value="model.labels.join(',')" required :disabled="model.freeze">
+              </div>
+
+              <div class="form-group" v-if="model.type && model.type == 'watsonclassifier' || model.type == 'watsonobjectdetection'">
+                <label :for="'ibm_api_key'+index">IBM Watson API Key:</label>
+                <input class="form-control" :id="'ibm_api_key'+index" v-model="model.ibm_api_key" required :disabled="model.freeze">
+              </div>
+
+              <div class="form-group" v-if="model.type && model.type == 'watsonclassifier' || model.type == 'watsonobjectdetection'">
+                <label :for="'collection_id'+index">Watson Model/Collection ID:</label>
+                <input class="form-control" :id="'collection_id'+index" v-model="model.collection_id" required :disabled="model.freeze">
+              </div>
+
+              <div style="display:flex;justify-content:space-between;flex-wrap:wrap;">
+                <button class="btn btn-danger" @click="deleteModel(index)" :disabled="model.freeze">Delete</button>
+                <button class="btn btn-primary" v-show="!model.freeze" @click="model.freeze = true">Freeze</button>
+                <button class="btn btn-primary" v-show="model.freeze" @click="model.freeze = false" style="background:#0077f1;filter: drop-shadow(2px 4px 6px black);">Un-Freeze</button>
+              </div>
+            </div>
+          </div>
+            
+          <div class="row">
+            <div class="col-sm-12">
+              <button class="btn btn-primary" @click="addNewModel">+ Add Model Pipeline</button>
+            </div>
+            <div v-if="models.length > 0" class="col-sm-12" style="margin-top:25px;">
+              <button class="btn btn-success btn-lg" @click="testImage">➜ Test Image</button>
+            </div>
+          </div>
+          <br/><br/><br/>
+        </div>
+      `
+    })
+  </script>
+
+  <style>
+    .blinker{transition: all 0.5s ease;}
+  </style>
+  {% endverbatim %}
+</body>
+</html>
