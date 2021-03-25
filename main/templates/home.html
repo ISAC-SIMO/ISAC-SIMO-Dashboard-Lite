@@ -13,6 +13,8 @@
 <body>
   <div id="app"></div>
 
+  <script type="text/javascript">window.CSRF_TOKEN = "{{ csrf_token }}";</script>
+
   {% verbatim %}
   <script>
     Vue.use(VueToast);
@@ -34,14 +36,19 @@
         name: 'ISAC-SIMO LITE',
         models: [],
         new_model: {
+          id: null,
           name: "",
           type: "",
           file: null,
           labels: [],
           collection_id: "",
           ibm_api_key: "",
-          freeze: false
-        }
+          freeze: false,
+        },
+        image: null,
+        error: null,
+        response: null,
+        testing: false
       },
       mounted: function() {
         /*window.addEventListener("beforeunload", function (e) {
@@ -67,6 +74,14 @@
             this.models[index].file = null;
           }
         },
+        addTestImage: function(e) {
+          if(e.target.files && e.target.files.length > 0) {
+            this.image = e.target.files[0];
+          } else {
+            console.warn("Test Image Unset");
+            this.image = null;
+          }
+        },
         formatLabel: function(e, index) {
           this.models[index].labels = e.target.value.split(",").map((l) => l.trim());
         },
@@ -81,16 +96,22 @@
             Vue.$toast.error(msg, {duration: 5000});
             setTimeout(() => {
               document.getElementById("card"+index).style.filter = "brightness(0.5)";
+              document.getElementById("card"+index).style.transform = "scale(1.04)";
             }, 100);
 
             setTimeout(() => {
               document.getElementById("card"+index).style.filter = "none";
+              document.getElementById("card"+index).style.transform = "scale(1)";
             }, 700);
           }
         },
         testImage: function() {
-          let dupliModels = [...this.models];
+          var dupliModels = [...this.models];
+          console.log(dupliModels)
           // Validate
+          var form = new FormData(this.$refs.form);
+          form.append("csrfmiddlewaretoken", window.CSRF_TOKEN);
+
           for (let [index, model] of dupliModels.entries()) {
             if(!model.name) {
               return this.alertUserToCard(index, ("Name Missing For #" + (index+1)));
@@ -108,76 +129,142 @@
               return this.alertUserToCard(index, ("Collection ID and IBM API Key is Required for: " + (model.name)));
             }
             delete model.freeze;
-            //console.log(dupliModels)
+
+            if(model.file) {
+              form.append( ("file_" + model.id) , model.file);
+            }
+            form.append( 'models[]' , JSON.stringify(model));
           }
+
+          // Test Image Check
+          if(!this.image) {
+            if(document.getElementById("image")) {
+              document.getElementById("image").scrollIntoView({behavior: "smooth"});
+              setTimeout(() => {
+                document.getElementById("image").style.filter = "brightness(0.5)";
+                document.getElementById("image").style.transform = "scale(1.04)";
+              }, 100);
+
+              setTimeout(() => {
+                document.getElementById("image").style.filter = "none";
+                document.getElementById("image").style.transform = "scale(1)";
+              }, 700);
+            }
+            return Vue.$toast.error("Test Image has not been provided.", {duration: 5000});
+          } else {
+            form.append("image", this.image);
+          }
+
+          this.testing = true;
+          this.error = null;
+          
+          // Call API Test
+          fetch('/test/', {
+              method: 'POST',
+              body: form
+            })
+            .then(async (res) => {
+              if (!res.ok) {
+                var err = await res.json()
+                if(err.message) {
+                  Vue.$toast.error(err.message, {duration: 5000});
+                }
+                this.error = err;
+                console.log('Error:', err);
+                throw new Error('die');
+              }
+
+              return res.json()
+            })
+            .then((res) => {
+              this.response = res;
+              Vue.$toast.success("Test Successful", {duration: 1500});
+              console.log('Success:', res);
+            })
+            .catch((err) => {
+              if(err.message && err.message != "die") {
+                Vue.$toast.error("Something went wrong", {duration: 5000});
+                this.error = err;
+                console.log('Error:', err);
+              }
+            }).finally(() => {
+              this.testing = false;
+            });
         }
       },
       template: `
         <div class="container">
+          <div :class="{ loader: true, show: testing }">Testing...</div>
           <h1>ISAC-SIMO Lite</h1>
           <h4>Developer Test Tool</h4>
 
           <model v-for="model in models" :key="model.id" :data="model"/>
 
           <hr/>
+          <form action="" method="POST" ref="form">
+            <div class="card blinker" v-for="model,index in models" :key="'c'+model.id" :id="'card'+index" style="margin-bottom: 25px;">
+              <div class="card-body" :style="model.freeze ? 'opacity:0.5;' : ''">
+                <h3>#{{index+1}}</h3>
+                <div class="form-group">
+                  <label :for="'name'+index">Name:</label>
+                  <input class="form-control" :id="'name'+index" v-model="model.name" placeholder="Name to remember it as" required :disabled="model.freeze">
+                </div>
 
-          <div class="card blinker" v-for="model,index in models" :key="'c'+model.id" :id="'card'+index" style="margin-bottom: 25px;">
-            <div class="card-body" :style="model.freeze ? 'opacity:0.5;' : ''">
-              <h3>#{{index+1}}</h3>
-              <div class="form-group">
-                <label :for="'name'+index">Name:</label>
-                <input class="form-control" :id="'name'+index" v-model="model.name" placeholder="Name to remember it as" required :disabled="model.freeze">
-              </div>
+                <div class="form-group">
+                  <label :for="'model_type'+index">Model Type:</label>
+                  <select class="form-control" :id="'model_type'+index" v-model="model.type" required :disabled="model.freeze">
+                    <option value="" disabled selected hidden>Select A Model Type</option>
+                    <option value="preprocessor">Pre-Processor (Python Script)</option>
+                    <option value="postprocessor">Post-Processor (Python Script)</option>
+                    <option value="classifier">Offline Classifier Model (H5, Python Scripts, Keras model etc.)</option>
+                    <option value="offlinemodel">Offline Object Detect Model (H5, Python Scripts, Keras model etc.)</option>
+                    <option value="watsonclassifier">Watson Classifier</option>
+                    <option value="watsonobjectdetection">Watson Object Detection</option>
+                  </select>
+                </div>
 
-              <div class="form-group">
-                <label :for="'model_type'+index">Model Type:</label>
-                <select class="form-control" :id="'model_type'+index" v-model="model.type" required :disabled="model.freeze">
-                  <option value="" disabled selected hidden>Select A Model Type</option>
-                  <option value="preprocessor">Pre-Processor (Python Script)</option>
-                  <option value="postprocessor">Post-Processor (Python Script)</option>
-                  <option value="classifier">Offline Classifier Model (H5, Python Scripts, Keras model etc.)</option>
-                  <option value="offlinemodel">Offline Object Detect Model (H5, Python Scripts, Keras model etc.)</option>
-                  <option value="watsonclassifier">Watson Classifier</option>
-                  <option value="watsonobjectdetection">Watson Object Detection</option>
-                </select>
-              </div>
+                <div class="form-group" v-if="model.type && model.type.indexOf('watson') < 0">
+                  <label :for="'file'+index">Model File</label>
+                  <input type="file" @change="addFile($event, index)" class="form-control-file" :id="'file'+index" required :disabled="model.freeze">
+                </div>
 
-              <div class="form-group" v-if="model.type && model.type.indexOf('watson') < 0">
-                <label :for="'file'+index">Model File</label>
-                <input type="file" @change="addFile($event, index)" class="form-control-file" :id="'file'+index" required :disabled="model.freeze">
-              </div>
+                <div class="form-group" v-if="model.type && model.type == 'classifier' || model.type == 'offlinemodel'">
+                  <label :for="'labels'+index">Comma Separated Label:</label>
+                  <input class="form-control" :id="'labels'+index" @input="formatLabel($event, index)" :value="model.labels.join(',')" required :disabled="model.freeze">
+                </div>
 
-              <div class="form-group" v-if="model.type && model.type == 'classifier' || model.type == 'offlinemodel'">
-                <label :for="'labels'+index">Comma Separated Label:</label>
-                <input class="form-control" :id="'labels'+index" @input="formatLabel($event, index)" :value="model.labels.join(',')" required :disabled="model.freeze">
-              </div>
+                <div class="form-group" v-if="model.type && model.type == 'watsonclassifier' || model.type == 'watsonobjectdetection'">
+                  <label :for="'ibm_api_key'+index">IBM Watson API Key:</label>
+                  <input class="form-control" :id="'ibm_api_key'+index" v-model="model.ibm_api_key" required :disabled="model.freeze">
+                </div>
 
-              <div class="form-group" v-if="model.type && model.type == 'watsonclassifier' || model.type == 'watsonobjectdetection'">
-                <label :for="'ibm_api_key'+index">IBM Watson API Key:</label>
-                <input class="form-control" :id="'ibm_api_key'+index" v-model="model.ibm_api_key" required :disabled="model.freeze">
-              </div>
+                <div class="form-group" v-if="model.type && model.type == 'watsonclassifier' || model.type == 'watsonobjectdetection'">
+                  <label :for="'collection_id'+index">Watson Model/Collection ID:</label>
+                  <input class="form-control" :id="'collection_id'+index" v-model="model.collection_id" required :disabled="model.freeze">
+                </div>
 
-              <div class="form-group" v-if="model.type && model.type == 'watsonclassifier' || model.type == 'watsonobjectdetection'">
-                <label :for="'collection_id'+index">Watson Model/Collection ID:</label>
-                <input class="form-control" :id="'collection_id'+index" v-model="model.collection_id" required :disabled="model.freeze">
-              </div>
-
-              <div style="display:flex;justify-content:space-between;flex-wrap:wrap;">
-                <button class="btn btn-danger" @click="deleteModel(index)" :disabled="model.freeze">Delete</button>
-                <button class="btn btn-primary" v-show="!model.freeze" @click="model.freeze = true">Freeze</button>
-                <button class="btn btn-primary" v-show="model.freeze" @click="model.freeze = false" style="background:#0077f1;filter: drop-shadow(2px 4px 6px black);">Un-Freeze</button>
+                <div style="display:flex;justify-content:space-between;flex-wrap:wrap;">
+                  <button type="button" class="btn btn-danger" @click="deleteModel(index)" :disabled="model.freeze">Delete</button>
+                  <button type="button" class="btn btn-primary" v-show="!model.freeze" @click="model.freeze = true">Freeze</button>
+                  <button type="button" class="btn btn-primary" v-show="model.freeze" @click="model.freeze = false" style="background:#0077f1;filter: drop-shadow(2px 4px 6px black);">Un-Freeze</button>
+                </div>
               </div>
             </div>
-          </div>
-            
-          <div class="row">
-            <div class="col-sm-12">
-              <button class="btn btn-primary" @click="addNewModel">+ Add Model Pipeline</button>
+              
+            <div class="row">
+              <div class="col-sm-12">
+                <button type="button" class="btn btn-primary" @click.prevent="addNewModel">+ Add Model Pipeline</button>
+              </div>
+              <div v-if="models.length > 0" class="col-sm-12" style="margin-top:10px;">
+                <hr style="border-top:1px solid rgb(255 255 255 / 32%);"/>
+                <div class="form-group">
+                  <label for="image">Provide the Test Image</label>
+                  <input style="transition: all 0.3s ease;transform-origin: left;" type="file" @change="addTestImage($event)" class="form-control-file" id="image" required>
+                </div>
+                <button type="submit" class="btn btn-success btn-lg" @click.prevent="testImage">➜ Test Image</button>
+              </div>
             </div>
-            <div v-if="models.length > 0" class="col-sm-12" style="margin-top:25px;">
-              <button class="btn btn-success btn-lg" @click="testImage">➜ Test Image</button>
-            </div>
-          </div>
+          </form>
           <br/><br/><br/>
         </div>
       `
@@ -186,6 +273,30 @@
 
   <style>
     .blinker{transition: all 0.5s ease;}
+    .loader{
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: #191b2ebf;
+      z-index: 99999;
+      cursor: not-allowed;
+      opacity: 0;
+      visibility: hidden;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-size: 1em;
+      letter-spacing: 3px;
+      font-weight: 700;
+      transition: all 0.3s ease;
+    }
+    .loader.show {
+      opacity: 1;
+      font-size: 1.5em;
+      visibility: visible;
+    }
   </style>
   {% endverbatim %}
 </body>
