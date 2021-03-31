@@ -7,6 +7,7 @@ from django.conf import settings
 import cv2
 import json
 import numpy as np
+import requests
 import tensorflow as tf
 from PIL import Image
 
@@ -61,6 +62,7 @@ def test(request):
         model = json.loads(m)
         file = files.get('file_'+str(model.get('id'))) or None
         file_name = None
+        _file = None
         # print(model)
         # print(file)
 
@@ -73,7 +75,6 @@ def test(request):
               file = open(file.temporary_file_path(), 'rb')
 
           # Write the file in new temp file...
-          _file = None
           flags = (os.O_WRONLY | os.O_CREAT | os.O_TRUNC |
                   getattr(os, 'O_BINARY', 0))
           # The current umask value is masked out by os.open!
@@ -104,6 +105,12 @@ def test(request):
           
           if res.get("path"): # Path value replaces old image_path
             image_path = res.get("path")
+          
+          if res.get("score"):
+            score = res.get("score")
+
+          if res.get("result"):
+            result = res.get("result")
 
           if res.get("die"):
             print('Dieing..')
@@ -223,6 +230,74 @@ def run_test(model, file, file_name, image, image_name, image_path, score, resul
       # tf.reset_default_graph()
       img.close()
       return {'data':data, 'score':score, 'result':result_type, "die": False, "status": True}
+
+    # Type = watsonobjectdetection
+    elif model.get("type") == "watsonobjectdetection":
+      collection_id = model.get("collection_id")
+      ibm_api_key = model.get("ibm_api_key")
+      post_data = {'collection_ids': collection_id, 'features':'objects', 'threshold':'0.15'} # 'threshold': '0.15 -1'
+      auth_base = 'Basic '+str(base64.b64encode(bytes('apikey:'+ibm_api_key, 'utf-8')).decode('utf-8'))
+      post_header = {'Accept':'application/json','Authorization':auth_base}
+      
+      _image = open(image_path, 'rb')
+      post_files = {
+        'images_file': _image,
+      }
+      response = requests.post('https://gateway.watsonplatform.net/visual-recognition/api/v4/analyze?version=2019-02-11', files=post_files, headers=post_header, data=post_data)
+      status = response.status_code
+      try:
+          content = response.json()
+          if(status == 200 or status == '200' or status == 201 or status == '201' and content):
+            if "collections" in content['images'][0]['objects']:
+              if(content['images'][0]['objects']['collections'][0]['objects']):
+                sorted_by_score = sorted(content['images'][0]['objects']['collections'][0]['objects'], key=lambda k: k['score'], reverse=True)
+                # print(sorted_by_score)
+                if(sorted_by_score and sorted_by_score[0]):
+                  return {'data':sorted_by_score, 'score':sorted_by_score[0]['score'], 'result':sorted_by_score[0]['object'], "die": False, "status": True}
+
+          print("Reason:",status,content)
+          return {"message" : "Watson Object Detection did not detect anything.", "die": True, "status": False}
+
+      # Watson is not valid JSON etc
+      except ValueError as e:
+          # IBM Response is BAD
+          print(e)
+          print('IBM Watson Object Detection Response was BAD - (e.g. image too large, response json was invalid etc.)')
+          return {"message" : "Watson Object Detection test failed.", "die": True, "status": False}
+      finally:
+        _image.close()
+
+    # Type = watsonclassifier
+    elif model.get("type") == "watsonclassifier":
+      collection_id = model.get("collection_id")
+      ibm_api_key = model.get("ibm_api_key")
+      post_data = {'collection_ids': collection_id}
+      auth_base = 'Basic '+str(base64.b64encode(bytes('apikey:'+ibm_api_key, 'utf-8')).decode('utf-8'))
+      post_header = {'Accept':'application/json','Authorization':auth_base}
+      
+      _image = open(image_path, 'rb')
+      post_files = {
+        'images_file': _image,
+      }
+      response = requests.post('https://gateway.watsonplatform.net/visual-recognition/api/v3/classify?version=2018-03-19', files=post_files, headers=post_header, data=post_data)
+      status = response.status_code
+      try:
+          content = response.json()
+          if(content['images'][0]['classifiers'][0]['classes']):
+            sorted_by_score = sorted(content['images'][0]['classifiers'][0]['classes'], key=lambda k: k['score'], reverse=True)
+            return {'data':sorted_by_score, 'score':sorted_by_score[0]['score'], 'result':sorted_by_score[0]['class'], "die": False, "status": True}
+
+          print("Reason:",status,content)
+          return {"message" : "Watson Classifier did not found anything.", "die": True, "status": False}
+
+      # Watson is not valid JSON etc
+      except ValueError as e:
+          # IBM Response is BAD
+          print(e)
+          print('IBM Watson Classifier Response was BAD - (e.g. image too large, response json was invalid etc.)')
+          return {"message" : "Watson Classifier test failed.", "die": True, "status": False}
+      finally:
+        _image.close()
 
     else:
       return {"message" : "Invalid Model Type Received", "die": True, "status": False}

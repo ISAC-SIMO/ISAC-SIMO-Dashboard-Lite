@@ -107,7 +107,8 @@
         },
         testImage: function() {
           var dupliModels = [...this.models];
-          console.log(dupliModels)
+          var i = 0;
+          console.log("Request Content Includes:", dupliModels)
           // Validate
           var form = new FormData(this.$refs.form);
           form.append("csrfmiddlewaretoken", window.CSRF_TOKEN);
@@ -128,10 +129,24 @@
             if(model.type.indexOf('watson') >= 0 && (!model.collection_id || !model.ibm_api_key)) {
               return this.alertUserToCard(index, ("Collection ID and IBM API Key is Required for: " + (model.name)));
             }
-            delete model.freeze;
+            //delete model.freeze;
 
             if(model.file) {
-              form.append( ("file_" + model.id) , model.file);
+              const reader = new FileReader();
+              var _this = this;
+              reader.readAsText(model.file, "UTF-8");
+              reader.onload = function (evt) {
+                form.append( ("file_" + model.id) , model.file);
+                i++;
+              }
+              reader.onerror = function (err) {
+                //console.log(err.target.error);
+                document.getElementById("file"+index).value = null;
+                model.file = null;
+                return _this.alertUserToCard(index, ("Please Re-upload Model File for: " + (model.name) + " (It was modified)"));
+              }
+            } else {
+              i++;
             }
             form.append( 'models[]' , JSON.stringify(model));
           }
@@ -152,44 +167,61 @@
             }
             return Vue.$toast.error("Test Image has not been provided.", {duration: 5000});
           } else {
-            form.append("image", this.image);
+            const reader = new FileReader();
+            var _this = this;
+            reader.readAsText(this.image, "UTF-8");
+            reader.onload = function (evt) {
+              form.append("image", _this.image);
+              i++;
+            }
+            reader.onerror = function (err) {
+              //console.log(err.target.error);
+              document.getElementById("image").value = null;
+              _this.image = null;
+              return Vue.$toast.error("Please Re-upload Test Image (It was modified)", {duration: 5000});
+            }
           }
 
-          this.testing = true;
-          this.error = null;
           
           // Call API Test
-          fetch('/test/', {
-              method: 'POST',
-              body: form
-            })
-            .then(async (res) => {
-              if (!res.ok) {
-                var err = await res.json()
-                if(err.message) {
-                  Vue.$toast.error(err.message, {duration: 5000});
+          var timer = setInterval(() => {
+            if(i > dupliModels.length) {
+              this.testing = true;
+              this.error = null;
+              clearInterval(timer);
+              fetch('/test/', {
+                method: 'POST',
+                body: form
+              })
+              .then(async (res) => {
+                if (!res.ok) {
+                  var err = await res.json()
+                  if(err.message) {
+                    Vue.$toast.error(err.message, {duration: 5000});
+                  }
+                  this.error = err;
+                  console.log('Error:', err);
+                  throw new Error('die');
                 }
-                this.error = err;
-                console.log('Error:', err);
-                throw new Error('die');
-              }
 
-              return res.json()
-            })
-            .then((res) => {
-              this.response = res;
-              Vue.$toast.success("Test Successful", {duration: 1500});
-              console.log('Success:', res);
-            })
-            .catch((err) => {
-              if(err.message && err.message != "die") {
-                Vue.$toast.error("Something went wrong", {duration: 5000});
-                this.error = err;
-                console.log('Error:', err);
-              }
-            }).finally(() => {
-              this.testing = false;
-            });
+                return res.json()
+              })
+              .then((res) => {
+                this.response = res;
+                Vue.$toast.success("Test Successful", {duration: 1500});
+                console.log('Success:', res);
+              })
+              .catch((err) => {
+                if(err.message && err.message != "die") {
+                  Vue.$toast.error("Something went wrong", {duration: 5000});
+                  this.error = err;
+                  console.log('Error:', err);
+                }
+              }).finally(() => {
+                this.testing = false;
+              });
+            }
+          }, 200)
         }
       },
       template: `
