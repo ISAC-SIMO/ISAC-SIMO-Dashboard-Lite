@@ -30,11 +30,67 @@
       `
     });
 
+    Vue.component('test-result', {
+      props: ["response","model"],
+      template: `
+        <div>
+          <span v-if="response && response.status">
+            <div v-if="model.type == 'preprocessor'">
+              <img :src="response.data" />
+              <p class="mt-2 text-success"><i>Pre-Processed Image</i></p>
+              <p class="m-0"><small class="text-muted">(This Image will be used by all models below.)</small></p>
+            </div>
+
+            <div v-if="model.type == 'postprocessor'">
+              <pre>{{ JSON.stringify(response.data, null, 4) }}</pre>
+              <p class="text-success">Result: {{response.data.result || "N/A"}}</p>
+              <p class="text-success">Score: {{response.data.score || "N/A"}}</p>
+
+              <p class="mt-2 text-success"><i>Post-Processor Result</i></p>
+            </div>
+
+            <div v-if="model.type == 'classifier'">
+              <pre>{{ JSON.stringify(response.data, null, 4) }}</pre>
+              <p class="text-success">Result: {{response.result || "N/A"}}</p>
+              <p class="text-success">Score: {{response.score || "N/A"}}</p>
+
+              <p class="mt-2 text-success"><i>Classifier Result</i></p>
+            </div>
+
+            <div v-if="model.type == 'watsonclassifier'">
+              <pre>{{ JSON.stringify(response.data, null, 4) }}</pre>
+              <p class="text-success">Result: {{response.result || "N/A"}}</p>
+              <p class="text-success">Score: {{response.score || "N/A"}}</p>
+
+              <p class="mt-2 text-success"><i>Watson Classifier Result</i></p>
+            </div>
+
+            <div v-if="model.type == 'watsonobjectdetection'">
+              <pre>{{ JSON.stringify(response.data, null, 4) }}</pre>
+              <p class="text-success">Result: {{response.result || "N/A"}}</p>
+              <p class="text-success">Score: {{response.score || "N/A"}}</p>
+
+              <p class="mt-2 text-success"><i>Watson Object Detection Result</i></p>
+            </div>
+
+          </span>
+
+          <span v-else-if="response && !response.status">
+            <b class="text-danger">{{response.message || "NO RESULT"}}</b>
+          </span>
+          <span v-else>
+            <b class="text-danger">NO RESULT</b>
+          </span>
+        </div>
+      `
+    });
+
     var app = new Vue({
       el: '#app',
       data: {
         name: 'ISAC-SIMO LITE',
         models: [],
+        last_tested_models: [],
         new_model: {
           id: null,
           name: "",
@@ -44,6 +100,7 @@
           collection_id: "",
           ibm_api_key: "",
           freeze: false,
+          show_result: false
         },
         image: null,
         error: null,
@@ -189,6 +246,7 @@
               this.testing = true;
               this.error = null;
               clearInterval(timer);
+              this.last_tested_models = JSON.parse(JSON.stringify(this.models));
               fetch('/test/', {
                 method: 'POST',
                 body: form
@@ -200,6 +258,7 @@
                     Vue.$toast.error(err.message, {duration: 5000});
                   }
                   this.error = err;
+                  this.response = null;
                   console.log('Error:', err);
                   throw new Error('die');
                 }
@@ -215,10 +274,12 @@
                 if(err.message && err.message != "die") {
                   Vue.$toast.error("Something went wrong", {duration: 5000});
                   this.error = err;
+                  this.response = null;
                   console.log('Error:', err);
                 }
               }).finally(() => {
                 this.testing = false;
+                document.getElementById("top").scrollIntoView({behavior: "smooth"});
               });
             }
           }, 200)
@@ -227,10 +288,10 @@
       template: `
         <div class="container">
           <div :class="{ loader: true, show: testing }">Testing...</div>
-          <h1>ISAC-SIMO Lite</h1>
+          <h1 id="top">ISAC-SIMO Lite</h1>
           <h4>Developer Test Tool</h4>
 
-          <model v-for="model in models" :key="model.id" :data="model"/>
+          <!-- <model v-for="model in models" :key="model.id" :data="model"/> -->
 
           <hr/>
           <form action="" method="POST" ref="form">
@@ -280,6 +341,20 @@
                   <button type="button" class="btn btn-primary" v-show="!model.freeze" @click="model.freeze = true">Freeze</button>
                   <button type="button" class="btn btn-primary" v-show="model.freeze" @click="model.freeze = false" style="background:#0077f1;filter: drop-shadow(2px 4px 6px black);">Un-Freeze</button>
                 </div>
+
+                <div class="card mt-2" style="border:none;" v-if="response">
+                  <div class="card-header p-0">
+                    <button type="button" class="btn" style="width:100%;" @click.prevent="model.show_result = !model.show_result">
+                      View Test Result {{model.show_result ? " &nbsp;▷" : " &nbsp;▽"}}
+                    </button>
+                  </div>
+
+                  <div :class="{ collapse: true, show: model.show_result }">
+                    <div class="card-body" style="background: #222;">
+                      <test-result :response="response[model.id.toString()]" :model="last_tested_models.filter((lm) => lm.id == model.id)[0]"/>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
               
@@ -291,13 +366,23 @@
                 <hr style="border-top:1px solid rgb(255 255 255 / 32%);"/>
                 <div class="form-group">
                   <label for="image">Provide the Test Image</label>
-                  <input style="transition: all 0.3s ease;transform-origin: left;" type="file" @change="addTestImage($event)" class="form-control-file" id="image" required>
+                  <input style="transition: all 0.3s ease;transform-origin: left;width:auto;" type="file" @change="addTestImage($event)" class="form-control-file" id="image" required>
                 </div>
                 <button type="submit" class="btn btn-success btn-lg" @click.prevent="testImage">➜ Test Image</button>
               </div>
             </div>
           </form>
-          <br/><br/><br/>
+
+          <div class="card mt-2 mb-3" style="background: #222;" v-if="response && response.pipeline">
+            <br/>
+            <div class="card-header">Pipeline Result:</div>
+            <div class="card-body">
+              <pre style="padding:15px 0;margin:0;">{{ JSON.stringify(response.pipeline, null, 4) }}</pre>
+            </div>
+          </div>
+          <div v-else>
+            <br/><br/><br/>
+          </div>
         </div>
       `
     })
@@ -328,6 +413,9 @@
       opacity: 1;
       font-size: 1.5em;
       visibility: visible;
+    }
+    .collapse {
+      transition: all 0.3s ease;
     }
   </style>
   {% endverbatim %}

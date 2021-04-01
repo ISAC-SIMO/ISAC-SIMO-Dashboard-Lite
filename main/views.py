@@ -20,110 +20,114 @@ def home(request):
       return JsonResponse(status=200, data={'version':'1'})
 
 def test(request):
-    if request.method == "POST":
-      # Variables:
-      # image, image_name, _image (open file), image_path (saved path)
-      # file, file_name, _file (saved file) -- every for each models
-      # models = json string coming from frontend
-      # response = dict of response to send
-      # score = Score value (0.5, 1, 0.2)
-      # result = Result for the score (go,nogo)
-      # pipeline = Similar to response for with name etc.
+    try:
+      if request.method == "POST":
+        # Variables:
+        # image, image_name, _image (open file), image_path (saved path)
+        # file, file_name, _file (saved file) -- every for each models
+        # models = json string coming from frontend
+        # response = dict of response to send
+        # score = Score value (0.5, 1, 0.2)
+        # result = Result for the score (go,nogo)
+        # pipeline = Similar to response for with name etc.
 
-      # print(request.POST)
-      models = request.POST.getlist('models[]')
-      files = request.FILES
-      image = request.FILES.get("image")
-      _image = None
+        # print(request.POST)
+        models = request.POST.getlist('models[]')
+        files = request.FILES
+        image = request.FILES.get("image")
+        _image = None
 
-      if not image:
-        return JsonResponse(status=404, data={'message':'Image Not Provided'})
-      image_name = image.__str__()
+        if not image:
+          return JsonResponse(status=404, data={'message':'Image Not Provided'})
+        image_name = image.__str__()
 
-      img = Image.open(image)
-      img = img.convert('RGB')
-      img.save(temp_path+image_name, format='JPEG', quality=100)
-      image_path = temp_path+image_name
+        img = Image.open(image)
+        img = img.convert('RGB')
+        img.save(temp_path+image_name, format='JPEG', quality=100)
+        image_path = temp_path+image_name
 
-      # Open Image to read
-      if type(image) is InMemoryUploadedFile:
-          _image = image.open()
-      else:
-          _image = open(image.temporary_file_path(), 'rb')
-
-      response = {}
-      score = 0
-      result = ""
-      pipeline = {}
-
-      # print(files)
-
-      for m in models:
-        model = json.loads(m)
-        file = files.get('file_'+str(model.get('id'))) or None
-        file_name = None
-        _file = None
-        # print(model)
-        # print(file)
-
-        # Open File to read
-        if file:
-          file_name = temp_path + file.__str__()
-          if type(file) is InMemoryUploadedFile:
-              file = file.open()
-          else:
-              file = open(file.temporary_file_path(), 'rb')
-
-          # Write the file in new temp file...
-          flags = (os.O_WRONLY | os.O_CREAT | os.O_TRUNC |
-                  getattr(os, 'O_BINARY', 0))
-          # The current umask value is masked out by os.open!
-          fd = os.open(file_name, flags, 0o666)
-          try:
-              for chunk in file.chunks():
-                  if _file is None:
-                      mode = 'wb' if isinstance(chunk, bytes) else 'wt'
-                      _file = os.fdopen(fd, mode)
-                  _file.write(chunk)
-          finally:
-              if _file is not None:
-                  _file.close()
-              else:
-                  os.close(fd)
-              file.close()
-          
-          # print(_file)
-              
-        ############
-        # RUN TEST #
-        ############
-        res = run_test(model, _file, file_name, image, image_name, image_path, score, result, pipeline)
-
-        if res and type(res) == "dict":
-          response[str(model.get("id"))] = res
-          pipeline[str(model.get("name"))] = res
-          
-          if res.get("path"): # Path value replaces old image_path
-            image_path = res.get("path")
-          
-          if res.get("score"):
-            score = res.get("score")
-
-          if res.get("result"):
-            result = res.get("result")
-
-          if res.get("die"):
-            print('Dieing..')
-            return JsonResponse(status=200, data=response)
+        # Open Image to read
+        if type(image) is InMemoryUploadedFile:
+            _image = image.open()
         else:
-          response[str(model.get("id"))] = res
-          pipeline[str(model.get("name"))] = res
+            _image = open(image.temporary_file_path(), 'rb')
 
-      # Finally send response
-      _image.close()
-      response['pipeline'] = pipeline
-      return JsonResponse(status=200, data=response)
-    
+        response = {}
+        score = 0
+        result = ""
+        pipeline = {}
+
+        # print(files)
+
+        for m in models:
+          model = json.loads(m)
+          file = files.get('file_'+str(model.get('id'))) or None
+          file_name = None
+          _file = None
+          # print(model)
+          # print(file)
+
+          # Open File to read
+          if file:
+            file_name = temp_path + file.__str__()
+            if type(file) is InMemoryUploadedFile:
+                file = file.open()
+            else:
+                file = open(file.temporary_file_path(), 'rb')
+
+            # Write the file in new temp file...
+            flags = (os.O_WRONLY | os.O_CREAT | os.O_TRUNC |
+                    getattr(os, 'O_BINARY', 0))
+            # The current umask value is masked out by os.open!
+            fd = os.open(file_name, flags, 0o666)
+            try:
+                for chunk in file.chunks():
+                    if _file is None:
+                        mode = 'wb' if isinstance(chunk, bytes) else 'wt'
+                        _file = os.fdopen(fd, mode)
+                    _file.write(chunk)
+            finally:
+                if _file is not None:
+                    _file.close()
+                else:
+                    os.close(fd)
+                file.close()
+            
+            # print(_file)
+                
+          ############
+          # RUN TEST #
+          ############
+          res = run_test(model, _file, file_name, image, image_name, image_path, score, result, pipeline)
+
+          if res and type(res) == "dict":
+            response[str(model.get("id"))] = res
+            pipeline[str(model.get("name"))] = res
+            
+            if res.get("path"): # Path value replaces old image_path
+              image_path = res.get("path")
+            
+            if res.get("score"):
+              score = res.get("score")
+
+            if res.get("result"):
+              result = res.get("result")
+
+            if res.get("die"):
+              print('Dieing..')
+              return JsonResponse(status=200, data=response)
+          else:
+            response[str(model.get("id"))] = res
+            pipeline[str(model.get("name"))] = res
+
+        # Finally send response
+        _image.close()
+        response['pipeline'] = pipeline
+        return JsonResponse(status=200, data=response)
+    except Exception as e:
+      print(e)
+      return JsonResponse(status=500, data={'message': str(e).title() or 'Invalid Request'})
+
     # If invalid request method
     return JsonResponse(status=404, data={'message':'Invalid Request'})
 
@@ -263,7 +267,7 @@ def run_test(model, file, file_name, image, image_name, image_path, score, resul
           # IBM Response is BAD
           print(e)
           print('IBM Watson Object Detection Response was BAD - (e.g. image too large, response json was invalid etc.)')
-          return {"message" : "Watson Object Detection test failed.", "die": True, "status": False}
+          return {"message" : "Watson Object Detection Test Failed.", "die": True, "status": False}
       finally:
         _image.close()
 
@@ -295,7 +299,7 @@ def run_test(model, file, file_name, image, image_name, image_path, score, resul
           # IBM Response is BAD
           print(e)
           print('IBM Watson Classifier Response was BAD - (e.g. image too large, response json was invalid etc.)')
-          return {"message" : "Watson Classifier test failed.", "die": True, "status": False}
+          return {"message" : "Watson Classifier Test Failed.", "die": True, "status": False}
       finally:
         _image.close()
 
@@ -305,4 +309,4 @@ def run_test(model, file, file_name, image, image_name, image_path, score, resul
     print('An Error Occurred')
     print(e)
     # print(e.with_traceback(e.__traceback__))
-    return {"message" : "An error occurred. Check Django log.", "die": True, "status": False}
+    return {"message" : "An error occurred. Make sure the models are valid. Also, check Django Log for possible error.", "die": True, "status": False}
