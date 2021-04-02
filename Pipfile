@@ -7,6 +7,11 @@ verify_ssl = true
 
 [packages]
 django = "*"
+opencv-python = "*"
+numpy = "*"
+requests = "*"
+tensorflow = "*"
+pillow = "*"
 
 [requires]
 python_version = "3.8"
