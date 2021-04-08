@@ -283,12 +283,29 @@
               });
             }
           }, 200)
+        },
+        fetchMobileTestResult: function() {
+          fetch('/static/temp/external_response.json')
+            .then((response) => response.json())
+            .then((json) => {
+              if(json) {
+                //console.log(json)
+                this.response = json;
+                Vue.$toast.success("Mobile Test Response Loaded");
+              } else {
+                Vue.$toast.error("Could not load any recent Mobile test response.", {duration: 5000});
+              }
+            })
+            .catch((err) => {Vue.$toast.error("Could not load any recent Mobile test response.", {duration: 5000});});
         }
       },
       template: `
         <div class="container">
           <div :class="{ loader: true, show: testing }">Testing...</div>
-          <h1 id="top">ISAC-SIMO Lite</h1>
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h1 id="top">ISAC-SIMO Lite</h1>
+            <button type="button" class="btn btn-sm btn-secondary" @click.prevent="fetchMobileTestResult">View Mobile Test Result</button>
+          </div>
           <h4>Developer Test Tool</h4>
 
           <!-- <model v-for="model in models" :key="model.id" :data="model"/> -->

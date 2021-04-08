@@ -4,6 +4,7 @@ from django.shortcuts import render
 from django.http.response import JsonResponse
 from django.core.files.uploadedfile import InMemoryUploadedFile
 from django.conf import settings
+from django.views.decorators.csrf import csrf_exempt
 import cv2
 import json
 import numpy as np
@@ -19,7 +20,7 @@ def home(request):
     else:
       return JsonResponse(status=200, data={'version':'1'})
 
-def test(request):
+def test(request, useConfig=False):
     try:
       if request.method == "POST":
         # Variables:
@@ -36,6 +37,18 @@ def test(request):
         files = request.FILES
         image = request.FILES.get("image")
         _image = None
+
+        config = []
+        config_file = temp_path + 'config.json'
+
+        # Use Config (Example if coming from Mobile APP)
+        if useConfig:
+          if not os.path.exists(config_file) or not os.path.isfile(config_file):
+            return JsonResponse(status=404, data={'message':'Config file does not exist.'})
+          
+          with open(config_file) as f:
+            config = json.load(f)
+            models = config
 
         if not image:
           return JsonResponse(status=404, data={'message':'Image Not Provided'})
@@ -60,47 +73,66 @@ def test(request):
         # print(files)
 
         for m in models:
-          model = json.loads(m)
-          file = files.get('file_'+str(model.get('id'))) or None
+          model = m
+          if type(m) is str: # String for Web App & Dict for config based API approach
+            model = json.loads(m)
+          
           file_name = None
           _file = None
-          # print(model)
-          # print(file)
 
-          # Open File to read
-          if file:
-            file_name = temp_path + file.__str__()
-            if type(file) is InMemoryUploadedFile:
-                file = file.open()
-            else:
-                file = open(file.temporary_file_path(), 'rb')
+          if useConfig: # For Mobile Config based API (file will be loaded differently)
+            file_name = model.get("file")
+            if file_name:
+              with open(file_name) as f:
+                _file = f
+          else: # For Web App
+            file = files.get('file_'+str(model.get('id'))) or None
+            # Open File to read
+            if file:
+              file_name = temp_path + file.__str__()
+              if type(file) is InMemoryUploadedFile:
+                  file = file.open()
+              else:
+                  file = open(file.temporary_file_path(), 'rb')
 
-            # Write the file in new temp file...
-            flags = (os.O_WRONLY | os.O_CREAT | os.O_TRUNC |
-                    getattr(os, 'O_BINARY', 0))
-            # The current umask value is masked out by os.open!
-            fd = os.open(file_name, flags, 0o666)
-            try:
-                for chunk in file.chunks():
-                    if _file is None:
-                        mode = 'wb' if isinstance(chunk, bytes) else 'wt'
-                        _file = os.fdopen(fd, mode)
-                    _file.write(chunk)
-            finally:
-                if _file is not None:
-                    _file.close()
-                else:
-                    os.close(fd)
-                file.close()
-            
-            # print(_file)
+              # Write the file in new temp file...
+              flags = (os.O_WRONLY | os.O_CREAT | os.O_TRUNC |
+                      getattr(os, 'O_BINARY', 0))
+              # The current umask value is masked out by os.open!
+              fd = os.open(file_name, flags, 0o666)
+              try:
+                  for chunk in file.chunks():
+                      if _file is None:
+                          mode = 'wb' if isinstance(chunk, bytes) else 'wt'
+                          _file = os.fdopen(fd, mode)
+                      _file.write(chunk)
+              finally:
+                  if _file is not None:
+                      _file.close()
+                  else:
+                      os.close(fd)
+                  file.close()
+              
+              # print(_file)
                 
           ############
           # RUN TEST #
           ############
           res = run_test(model, _file, file_name, image, image_name, image_path, score, result, pipeline)
 
-          if res and type(res) == "dict":
+          if not useConfig:
+            # Append new Config
+            config.append({
+              "id": str(model.get("id")),
+              "name": str(model.get("name")),
+              "type": str(model.get("type")),
+              "file": file_name,
+              "labels": model.get("labels", []),
+              "collection_id": str(model.get("collection_id", None)),
+              "ibm_api_key": str(model.get("ibm_api_key", None))
+            })
+
+          if res and type(res) is dict:
             response[str(model.get("id"))] = res
             pipeline[str(model.get("name"))] = res
             
@@ -115,21 +147,41 @@ def test(request):
 
             if res.get("die"):
               print('Dieing..')
-              return JsonResponse(status=200, data=response)
+              break;
           else:
             response[str(model.get("id"))] = res
             pipeline[str(model.get("name"))] = res
 
         # Finally send response
         _image.close()
+
         response['pipeline'] = pipeline
-        return JsonResponse(status=200, data=response)
+
+        if not useConfig:
+          # Write Config to File
+          with open(config_file, 'w', encoding='utf-8') as f:
+            json.dump(config, f, ensure_ascii=False, indent=4)
+        
+        else:
+          # Saving Mobile Response (To show in UI all pipeline results)
+          with open(temp_path + 'external_response.json', 'w', encoding='utf-8') as f:
+            json.dump(response, f, ensure_ascii=False, indent=4)
+
+        if useConfig:
+          # Little Bit Different Respones for Mobile API
+          return JsonResponse(status=200, data={"data": response, "score": score, "result": result})
+        else:
+          return JsonResponse(status=200, data=response)
     except Exception as e:
       print(e)
       return JsonResponse(status=500, data={'message': str(e).title() or 'Invalid Request'})
 
     # If invalid request method
     return JsonResponse(status=404, data={'message':'Invalid Request'})
+
+@csrf_exempt
+def testMobile(request):
+  return test(request, useConfig=True)
 
 def run_test(model, file, file_name, image, image_name, image_path, score, result, pipeline):
   try:
@@ -149,9 +201,9 @@ def run_test(model, file, file_name, image, image_name, image_path, score, resul
         result = handle.run(img)
         baseuri = base64.b64encode(cv2.imencode('.jpg', result)[1]).decode()
         cv2.imwrite(temp_path+image_name, result)
-        return {"data" : 'data:image/jpg;base64,'+baseuri, "path": temp_path+image_name, "status": True}
+        return {"id": model.get("id"), "name": model.get("name"), "type": "preprocessor", "data" : 'data:image/jpg;base64,'+baseuri, "path": temp_path+image_name, "status": True}
       else:
-        return {"message" : "No File Provided for Preprocessor", "die": True, "status": False}
+        return {"id": model.get("id"), "name": model.get("name"), "type": "preprocessor", "message" : "No File Provided for Preprocessor", "die": True, "status": False}
 
     # Type = postprocessor
     elif model.get("type") == "postprocessor":
@@ -167,9 +219,9 @@ def run_test(model, file, file_name, image, image_name, image_path, score, resul
         else:
           img = cv2.imdecode(np.fromstring(image.read(), np.uint8), cv2.IMREAD_UNCHANGED)
         result = handle.run(img,pipeline,score,result)
-        return {"data" : result, "die" : result.get('break', False), "status": True}
+        return {"id": model.get("id"), "name": model.get("name"), "type": "postprocessor", "data" : result, "score" : result.get('score', 0), "result" : result.get('result', ""), "die" : result.get('break', False), "status": True}
       else:
-        return {"message" : "No File Provided for Postprocessor", "die": True, "status": False}
+        return {"id": model.get("id"), "name": model.get("name"), "type": "postprocessor", "message" : "No File Provided for Postprocessor", "die": True, "status": False}
 
     # Type = classifier
     elif model.get("type") == "classifier":
@@ -187,7 +239,7 @@ def run_test(model, file, file_name, image, image_name, image_path, score, resul
           except Exception as e:
               img.close()
               print(e)
-              return {"message" : "Failed to run h5, hdf5, keras, Offline Model", "die": True, "status": False}
+              return {"id": model.get("id"), "name": model.get("name"), "type": "classifier", "message" : "Failed to run h5, hdf5, keras, Offline Model", "die": True, "status": False}
       elif ('py').__contains__(file_name.split(".")[-1]): # python script
           # Trying to run saved offline .py model (loading saved py file using string name)
           try:
@@ -200,9 +252,9 @@ def run_test(model, file, file_name, image, image_name, image_path, score, resul
                   print('py local model -- BAD response (not list)')
           except Exception as e:
               print(e)
-              return {"message" : "Failed to run .py Offline Model", "die": True, "status": False}
+              return {"id": model.get("id"), "name": model.get("name"), "type": "classifier", "message" : "Failed to run .py Offline Model", "die": True, "status": False}
       else:
-        return {"message" : "This Offline Model Format is not supported.", "die": True, "status": False}
+        return {"id": model.get("id"), "name": model.get("name"), "type": "classifier", "message" : "This Offline Model Format is not supported.", "die": True, "status": False}
 
       data = []
       
@@ -233,7 +285,7 @@ def run_test(model, file, file_name, image, image_name, image_path, score, resul
       tf.keras.backend.clear_session()
       # tf.reset_default_graph()
       img.close()
-      return {'data':data, 'score':score, 'result':result_type, "die": False, "status": True}
+      return {"id": model.get("id"), "name": model.get("name"), "type": "classifier", 'data':data, 'score':score, 'result':result_type, "die": False, "status": True}
 
     # Type = watsonobjectdetection
     elif model.get("type") == "watsonobjectdetection":
@@ -257,17 +309,17 @@ def run_test(model, file, file_name, image, image_name, image_path, score, resul
                 sorted_by_score = sorted(content['images'][0]['objects']['collections'][0]['objects'], key=lambda k: k['score'], reverse=True)
                 # print(sorted_by_score)
                 if(sorted_by_score and sorted_by_score[0]):
-                  return {'data':sorted_by_score, 'score':sorted_by_score[0]['score'], 'result':sorted_by_score[0]['object'], "die": False, "status": True}
+                  return {"id": model.get("id"), "name": model.get("name"), "type": "watsonobjectdetection", 'data':sorted_by_score, 'score':sorted_by_score[0]['score'], 'result':sorted_by_score[0]['object'], "die": False, "status": True}
 
           print("Reason:",status,content)
-          return {"message" : "Watson Object Detection did not detect anything.", "die": True, "status": False}
+          return {"id": model.get("id"), "name": model.get("name"), "type": "watsonobjectdetection", "message" : "Watson Object Detection did not detect anything.", "die": True, "status": False}
 
       # Watson is not valid JSON etc
       except ValueError as e:
           # IBM Response is BAD
           print(e)
           print('IBM Watson Object Detection Response was BAD - (e.g. image too large, response json was invalid etc.)')
-          return {"message" : "Watson Object Detection Test Failed.", "die": True, "status": False}
+          return {"id": model.get("id"), "name": model.get("name"), "type": "watsonobjectdetection", "message" : "Watson Object Detection Test Failed.", "die": True, "status": False}
       finally:
         _image.close()
 
@@ -289,24 +341,24 @@ def run_test(model, file, file_name, image, image_name, image_path, score, resul
           content = response.json()
           if(content['images'][0]['classifiers'][0]['classes']):
             sorted_by_score = sorted(content['images'][0]['classifiers'][0]['classes'], key=lambda k: k['score'], reverse=True)
-            return {'data':sorted_by_score, 'score':sorted_by_score[0]['score'], 'result':sorted_by_score[0]['class'], "die": False, "status": True}
+            return {"id": model.get("id"), "name": model.get("name"), "type": "watsonclassifier", 'data':sorted_by_score, 'score':sorted_by_score[0]['score'], 'result':sorted_by_score[0]['class'], "die": False, "status": True}
 
           print("Reason:",status,content)
-          return {"message" : "Watson Classifier did not found anything.", "die": True, "status": False}
+          return {"id": model.get("id"), "name": model.get("name"), "type": "watsonclassifier", "message" : "Watson Classifier did not found anything.", "die": True, "status": False}
 
       # Watson is not valid JSON etc
       except ValueError as e:
           # IBM Response is BAD
           print(e)
           print('IBM Watson Classifier Response was BAD - (e.g. image too large, response json was invalid etc.)')
-          return {"message" : "Watson Classifier Test Failed.", "die": True, "status": False}
+          return {"id": model.get("id"), "name": model.get("name"), "type": "watsonclassifier", "message" : "Watson Classifier Test Failed.", "die": True, "status": False}
       finally:
         _image.close()
 
     else:
-      return {"message" : "Invalid Model Type Received", "die": True, "status": False}
+      return {"id": model.get("id"), "name": model.get("name"), "type": model.get("type"), "message" : "Invalid Model Type Received", "die": True, "status": False}
   except Exception as e:
     print('An Error Occurred')
     print(e)
     # print(e.with_traceback(e.__traceback__))
-    return {"message" : "An error occurred. Make sure the models are valid. Also, check Django Log for possible error.", "die": True, "status": False}
+    return {"id": model.get("id"), "name": model.get("name"), "type": model.get("type"), "message" : "An error occurred. Make sure the models are valid. Also, check Django Log for possible error.", "die": True, "status": False}
