@@ -115,6 +115,9 @@
             (e || window.event).returnValue = confirmationMessage;
             return confirmationMessage;
         });
+        window.addEventListener("unload", function() {
+          navigator.sendBeacon('/unload/');
+        });
       },
       methods:{
         addNewModel: function () {

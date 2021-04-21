@@ -167,6 +167,7 @@ def test(request, useConfig=False):
           with open(temp_path + 'external_response.json', 'w', encoding='utf-8') as f:
             json.dump(response, f, ensure_ascii=False, indent=4)
 
+        print("Result:", {"score": score, "result": result})
         if useConfig:
           # Little Bit Different Respones for Mobile API
           return JsonResponse(status=200, data={"data": response, "score": score, "result": result})
@@ -362,3 +363,14 @@ def run_test(model, file, file_name, image, image_name, image_path, score, resul
     print(e)
     # print(e.with_traceback(e.__traceback__))
     return {"id": model.get("id"), "name": model.get("name"), "type": model.get("type"), "message" : "An error occurred. Make sure the models are valid. Also, check Django Log for possible error.", "die": True, "status": False}
+
+@csrf_exempt
+def unload(request):
+  config_file = temp_path + 'config.json'
+  external_response_file = temp_path + 'external_response.json'
+  try:
+    os.remove(config_file)
+    os.remove(external_response_file)
+  except OSError:
+      pass
+  return JsonResponse(status=200, data={'message':'Unloaded Successfully'})
